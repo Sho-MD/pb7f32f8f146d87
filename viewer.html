@@ -50,13 +50,48 @@
   #hud b{color:var(--acc)}
   #sel{position:absolute;left:14px;bottom:14px;background:rgba(16,20,26,.9);border:1px solid var(--acc);
     border-radius:8px;padding:9px 12px;font-size:11.5px;line-height:1.6;display:none;max-width:340px}
-  #eye{position:absolute;right:14px;top:14px;background:rgba(16,20,26,.82);border:1px solid var(--line);
+  #eye{position:absolute;right:14px;top:66px;background:rgba(16,20,26,.82);border:1px solid var(--line);
     border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.7;color:var(--dim)}
   #eye b{color:var(--ink)}
   .warnbox{background:#3a2218;border:1px solid #7a4028;color:#ffc7ab;border-radius:7px;padding:8px 11px;
     font-size:11px;line-height:1.65;margin-top:8px}
   #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:var(--bg);color:var(--dim);font-size:13px;z-index:5}
+
+  /* ---- パネル開閉ボタン ---- */
+  #toggle{position:fixed;right:12px;top:12px;z-index:40;width:44px;height:44px;border-radius:11px;
+    border:1px solid var(--line);background:rgba(16,20,26,.92);color:var(--ink);font-size:19px;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;
+    -webkit-tap-highlight-color:transparent}
+  #toggle:hover{border-color:var(--acc);color:var(--acc)}
+  #side h1{padding-right:50px}
+  canvas{touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
+  #view{touch-action:none}
+
+  /* ---- デスクトップ：折りたたみ ---- */
+  @media (min-width:861px){
+    body.nav-closed #side{display:none}
+  }
+
+  /* ---- スマホ・タブレット：右からのドロワー ---- */
+  @media (max-width:860px){
+    #app{display:block}
+    #view{width:100%;height:100%}
+    #side{position:fixed;top:0;right:0;height:100%;width:min(88vw,340px);z-index:25;
+      box-shadow:-10px 0 28px rgba(0,0,0,.55);transform:translateX(102%);
+      transition:transform .22s ease;border-left:1px solid var(--line)}
+    body.nav-open #side{transform:translateX(0)}
+    #hud{max-width:52vw;font-size:10.5px;padding:7px 9px;line-height:1.5}
+    #eye{display:none}
+    #editbar{font-size:10px;padding:6px 10px;max-width:94vw;text-align:center;
+      left:12px;right:70px;transform:none}
+    #sel{max-width:74vw;font-size:10.5px}
+    .row{margin:9px 0}
+    button.mini{padding:8px 12px}
+    .pal button{padding:8px 7px;font-size:11px}
+    .fld input{padding:7px 6px;font-size:12px}
+    input[type=range]{height:26px}
+  }
   #editbar{position:absolute;left:50%;transform:translateX(-50%);top:14px;background:rgba(255,196,0,.14);
     border:1px solid #d4a017;color:#ffd97a;border-radius:8px;padding:7px 16px;font-size:12px;display:none}
   .ed{display:none}
@@ -84,6 +119,7 @@
     <div id="hud"></div>
     <div id="eye"></div>
     <div id="sel"></div>
+    <button id="toggle" title="設定パネルの開閉" aria-label="設定パネルの開閉">☰</button>
     <div id="editbar">編集モード ─ ドラッグ=移動 / R=回転 / Del=削除 / Ctrl+D=複製 / 矢印=微調整</div>
   </div>
   <div id="side">
@@ -1163,7 +1199,30 @@ function resize(){
   var s = 4600/plan.zoom, a = w/h;
   camO.left=-s*a; camO.right=s*a; camO.top=s; camO.bottom=-s; camO.updateProjectionMatrix();
 }
-addEventListener('resize', resize);
+addEventListener('resize', function(){ resize(); syncNav(); });
+
+/* ---- 設定パネルの開閉 ---- */
+function isNarrow(){ return window.matchMedia('(max-width:860px)').matches; }
+function navOpen(){
+  return isNarrow() ? document.body.classList.contains('nav-open')
+                    : !document.body.classList.contains('nav-closed');
+}
+function syncNav(){
+  document.getElementById('toggle').textContent = navOpen() ? '✕' : '☰';
+}
+function toggleNav(){
+  if (isNarrow()) document.body.classList.toggle('nav-open');
+  else { document.body.classList.toggle('nav-closed'); resize(); }
+  syncNav();
+}
+document.getElementById('toggle').onclick = toggleNav;
+addEventListener('keydown', function(e){
+  if (/input|select|textarea/i.test(e.target.tagName)) return;
+  if (e.code === 'Escape' || e.code === 'Tab' && !e.shiftKey && e.altKey){ e.preventDefault(); toggleNav(); }
+});
+/* 初期状態：狭い画面ではパネルを閉じておく */
+if (isNarrow()) document.body.classList.remove('nav-open');
+syncNav();
 
 var last = performance.now();
 function tick(now){
