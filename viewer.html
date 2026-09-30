@@ -68,6 +68,19 @@
   canvas{touch-action:none;-webkit-tap-highlight-color:transparent;user-select:none}
   #view{touch-action:none}
 
+  /* ---- ウォークスルー用 移動ボタン ---- */
+  #mobmove{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:35;
+    display:none;gap:16px}
+  body.walking #mobmove{display:flex}
+  #mobmove button{width:64px;height:64px;border-radius:50%;font-size:21px;line-height:1;
+    border:1px solid var(--line);background:rgba(16,20,26,.86);color:var(--ink);cursor:pointer;
+    -webkit-tap-highlight-color:transparent;touch-action:none;user-select:none}
+  #mobmove button:active{background:var(--acc);color:#04121f;border-color:var(--acc)}
+  #gyrobadge{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:35;display:none;
+    background:rgba(77,163,255,.18);border:1px solid var(--acc);color:#bfe0ff;border-radius:999px;
+    padding:5px 14px;font-size:11px;white-space:nowrap}
+  body.gyro #gyrobadge{display:block}
+
   /* ---- デスクトップ：折りたたみ ---- */
   @media (min-width:861px){
     body.nav-closed #side{display:none}
@@ -120,6 +133,11 @@
     <div id="eye"></div>
     <div id="sel"></div>
     <button id="toggle" title="設定パネルの開閉" aria-label="設定パネルの開閉">☰</button>
+    <div id="gyrobadge">端末の向きに連動中 ─ もう一度押すと解除</div>
+    <div id="mobmove">
+      <button id="mvB" aria-label="後退">▼</button>
+      <button id="mvF" aria-label="前進">▲</button>
+    </div>
     <div id="editbar">編集モード ─ ドラッグ=移動 / R=回転 / Del=削除 / Ctrl+D=複製 / 矢印=微調整</div>
   </div>
   <div id="side">
@@ -168,6 +186,10 @@
       <button class="mini" id="mWalk">ウォークスルー</button>
       <button class="mini" id="mPlan">平面図</button>
     </div>
+    <div class="row">
+      <button class="mini" id="bGyro">📱 端末の向きに連動</button>
+    </div>
+    <div class="sub" id="gyroNote" style="margin-top:-2px">スマートフォンやタブレットで、端末を動かすと視点が連動します。</div>
     <div class="row">
       <button class="mini" data-vp="door">入口から</button>
       <button class="mini" data-vp="desk">自席から</button>
@@ -796,6 +818,7 @@ el.addEventListener('pointermove', function(e){
       orbit.ph = Math.max(0.12, Math.min(1.50, drag.o.ph - dy*0.005));
     }
   } else if (mode==='walk'){
+    if (gyro.on) return;
     walk.yaw = drag.w.yaw - dx*0.005;
     walk.pitch = Math.max(-1.1, Math.min(1.1, drag.w.pitch - dy*0.004));
   } else {
@@ -843,6 +866,8 @@ function setMode(m){
   document.getElementById('mWalk').classList.toggle('on', m==='walk');
   document.getElementById('mPlan').classList.toggle('on', m==='plan');
   camera = (m==='plan') ? camO : camP;
+  document.body.classList.toggle('walking', m==='walk');
+  if (m !== 'walk' && gyro.on) gyroStop();
   resize(); renderSide();
   if (typeof updateHandles === 'function'){ updateHandles(); renderInsp(); }
 }
@@ -1191,6 +1216,118 @@ addEventListener('keydown', function(e){
   if (used){ e.preventDefault(); rebuildAll(); }
 });
 
+/* ===================== 端末の向きセンサー ===================== */
+var FWD = new THREE.Vector3(), RGT = new THREE.Vector3(), UPV = new THREE.Vector3(0,1,0);
+var gyro = { on:false, got:false, alpha:0, beta:0, gamma:0, orient:0, offset:0, needOffset:false, timer:null };
+
+var _zee = new THREE.Vector3(0,0,1);
+var _eul = new THREE.Euler();
+var _q0  = new THREE.Quaternion();
+var _q1  = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2); /* -PI/2 around X */
+var _qs  = new THREE.Quaternion();
+var _qy  = new THREE.Quaternion();
+
+function sensorQuaternion(q){
+  _eul.set(gyro.beta, gyro.alpha, -gyro.gamma, 'YXZ');
+  q.setFromEuler(_eul);
+  q.multiply(_q1);
+  q.multiply(_q0.setFromAxisAngle(_zee, -gyro.orient));
+  return q;
+}
+function applyGyro(cam){
+  sensorQuaternion(_qs);
+  if (gyro.needOffset){
+    _eul.setFromQuaternion(_qs, 'YXZ');
+    gyro.offset = walk.yaw - _eul.y;
+    gyro.needOffset = false;
+  }
+  _qy.setFromAxisAngle(UPV, gyro.offset);
+  cam.quaternion.copy(_qy).multiply(_qs);
+}
+
+function onOrient(e){
+  if (e.alpha === null && e.beta === null && e.gamma === null) return;
+  gyro.alpha = THREE.MathUtils.degToRad(e.alpha || 0);
+  gyro.beta  = THREE.MathUtils.degToRad(e.beta  || 0);
+  gyro.gamma = THREE.MathUtils.degToRad(e.gamma || 0);
+  var a = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  gyro.orient = THREE.MathUtils.degToRad(+a);
+  if (!gyro.got){
+    gyro.got = true;
+    if (gyro.timer){ clearTimeout(gyro.timer); gyro.timer = null; }
+  }
+}
+function gyroStart(){
+  gyro.on = true; gyro.got = false; gyro.needOffset = true;
+  document.body.classList.add('gyro');
+  document.getElementById('bGyro').classList.add('on');
+  document.getElementById('bGyro').textContent = '📱 連動を解除';
+  addEventListener('deviceorientation', onOrient, true);
+  if (mode !== 'walk') setMode('walk');
+  gyro.timer = setTimeout(function(){
+    if (!gyro.got){
+      gyroStop();
+      document.getElementById('gyroNote').innerHTML =
+        '<span style="color:var(--warn)">この端末では向きセンサーを利用できませんでした。スマートフォン・タブレットでお試しください。</span>';
+    }
+  }, 2500);
+}
+function gyroStop(){
+  gyro.on = false; gyro.got = false;
+  if (gyro.timer){ clearTimeout(gyro.timer); gyro.timer = null; }
+  removeEventListener('deviceorientation', onOrient, true);
+  document.body.classList.remove('gyro');
+  document.getElementById('bGyro').classList.remove('on');
+  document.getElementById('bGyro').textContent = '📱 端末の向きに連動';
+  /* 解除時は現在の見え方を yaw/pitch に引き継ぐ */
+  _eul.setFromQuaternion(camP.quaternion, 'YXZ');
+  walk.yaw = _eul.y; walk.pitch = Math.max(-1.1, Math.min(1.1, _eul.x));
+}
+function gyroToggle(){
+  if (gyro.on){ gyroStop(); return; }
+  var DOE = window.DeviceOrientationEvent;
+  if (!DOE){
+    document.getElementById('gyroNote').innerHTML =
+      '<span style="color:var(--warn)">この端末は向きセンサーに対応していません。</span>';
+    return;
+  }
+  if (typeof DOE.requestPermission === 'function'){     /* iOS 13+ */
+    DOE.requestPermission().then(function(res){
+      if (res === 'granted') gyroStart();
+      else document.getElementById('gyroNote').innerHTML =
+        '<span style="color:var(--warn)">センサーを利用できませんでした（許可されなかったか、非対応の端末です）。iPhone / iPad の場合は「設定 &gt; Safari &gt; モーションと画面の向きのアクセス」をオンにしてください。</span>';
+    }).catch(function(err){
+      document.getElementById('gyroNote').innerHTML =
+        '<span style="color:var(--warn)">センサーを開始できませんでした（' + err.message + '）。</span>';
+    });
+  } else {
+    gyroStart();
+  }
+}
+document.getElementById('bGyro').onclick = gyroToggle;
+document.getElementById('gyrobadge').onclick = gyroToggle;
+
+/* 画面回転に追従 */
+addEventListener('orientationchange', function(){
+  var a = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  gyro.orient = THREE.MathUtils.degToRad(+a);
+});
+
+/* ウォークスルー用の前進・後退ボタン */
+(function(){
+  function hold(id, code){
+    var b = document.getElementById(id);
+    var press = function(e){ e.preventDefault(); keys[code] = 1; };
+    var rel   = function(){ keys[code] = 0; };
+    b.addEventListener('pointerdown', press);
+    b.addEventListener('pointerup', rel);
+    b.addEventListener('pointercancel', rel);
+    b.addEventListener('pointerleave', rel);
+  }
+  hold('mvF', 'KeyW');
+  hold('mvB', 'KeyS');
+})();
+
 /* ===================== ループ ===================== */
 function resize(){
   var w = view.clientWidth, h = view.clientHeight;
@@ -1225,17 +1362,26 @@ if (isNarrow()) document.body.classList.remove('nav-open');
 syncNav();
 
 var last = performance.now();
-function tick(now){
-  var dt = Math.min(0.05, (now-last)/1000); last = now;
+function step(dt){
   if (mode==='walk'){
+    /* 1) 向きを決める（センサー連動 or ドラッグ） */
+    if (gyro.on && gyro.got){
+      applyGyro(camP);
+    } else {
+      camP.rotation.order = 'YXZ';
+      camP.rotation.set(walk.pitch, walk.yaw, 0);
+    }
+    /* 2) カメラの向きから前方・右方を求める */
+    FWD.set(0,0,-1).applyQuaternion(camP.quaternion); FWD.y = 0;
+    if (FWD.lengthSq() < 1e-6) FWD.set(0,0,-1); else FWD.normalize();
+    RGT.crossVectors(FWD, UPV).normalize();
+    /* 3) 移動 */
     var sp = (keys.ShiftLeft||keys.ShiftRight ? 3600 : 1600) * dt;
-    var fx = -Math.sin(walk.yaw), fz = -Math.cos(walk.yaw);
-    var rx = Math.cos(walk.yaw),  rz = -Math.sin(walk.yaw);
     var mx=0, mz=0;
-    if (keys.KeyW||keys.ArrowUp)   { mx+=fx; mz+=fz; }
-    if (keys.KeyS||keys.ArrowDown) { mx-=fx; mz-=fz; }
-    if (keys.KeyA||keys.ArrowLeft) { mx-=rx; mz-=rz; }
-    if (keys.KeyD||keys.ArrowRight){ mx+=rx; mz+=rz; }
+    if (keys.KeyW||keys.ArrowUp)   { mx+=FWD.x; mz+=FWD.z; }
+    if (keys.KeyS||keys.ArrowDown) { mx-=FWD.x; mz-=FWD.z; }
+    if (keys.KeyA||keys.ArrowLeft) { mx-=RGT.x; mz-=RGT.z; }
+    if (keys.KeyD||keys.ArrowRight){ mx+=RGT.x; mz+=RGT.z; }
     var len = Math.hypot(mx,mz);
     if (len>0){
       mx=mx/len*sp; mz=mz/len*sp;
@@ -1243,8 +1389,6 @@ function tick(now){
       if (!blocked(walk.x, walk.z+mz)) walk.z += mz;
     }
     camP.position.set(walk.x, walk.y, walk.z);
-    camP.rotation.order = 'YXZ';
-    camP.rotation.set(walk.pitch, walk.yaw, 0);
   } else if (mode==='orbit'){
     var cx = orbit.tx + orbit.r*Math.sin(orbit.ph)*Math.sin(orbit.th);
     var cy = orbit.ty + orbit.r*Math.cos(orbit.ph);
@@ -1256,6 +1400,10 @@ function tick(now){
     camO.up.set(0,0,-1);
     camO.lookAt(plan.px, 0, plan.pz);
   }
+}
+function tick(now){
+  var dt = Math.min(0.05, (now-last)/1000); last = now;
+  step(dt);
   var c = (mode==='plan') ? camO : camP;
   labels.forEach(function(s){ s.material.rotation = 0; });
   document.getElementById('eye').innerHTML =
